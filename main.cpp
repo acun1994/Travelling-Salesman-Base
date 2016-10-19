@@ -79,7 +79,7 @@ class Chromosome{
 			return os;
 		}
 		
-		friend Chromosome* edge_recom(Chromosome&, Chromosome&);
+		friend Chromosome* edge_recom(Chromosome&, Chromosome&,int adj_matrix[][MAX_NEIGHBOURS]);
 		
 		friend void updateAdjMatrix(Chromosome&, int[][MAX_NEIGHBOURS]);
 };
@@ -145,30 +145,61 @@ Chromosome* edge_recom(Chromosome &cr1, Chromosome &cr2, int adj_matrix[][MAX_NE
 	*/
 
 	int newPath[CHROMO_LENGTH];
-	
-	//DEBUG: Test code for passing of Chromosome new Path
-	for (int i = 0; i<CHROMO_LENGTH; i++){
-		newPath[i] = i;
-	}
-	
-	int neighbour_count[CHROMO_LENGTH];
-	int least_neighbours_count = 99;
-	int least_neighbours_node = -1;
 
-	for (int i = 0; i<CHROMO_LENGTH; i++){
-		neighbour_count[i] = 0;
-	}
+	if (RANDOM_FLOAT<0.5) newPath[0] = cr1.path[0];
+	else newPath[0] = cr2.path[0];
+
+	int addedNode = newPath[0];
+
+	for (int newPathLength = 1; newPathLength<CHROMO_LENGTH; newPathLength++){
+		
+		int neighbour_count[CHROMO_LENGTH];
+		int least_neighbours_count = 99;
+		vector<int> least_neighbours_node;
 	
-	for (int node = 0; node<CHROMO_LENGTH; node++){
-		for (int neighbour = 0; neighbour<MAX_NEIGHBOURS; neighbour++){
-			if (adj_matrix[node][neighbour] == -1) continue;
-			else neighbour_count[node]++;
+		//Reset neighbour count
+		for (int i = 0; i<CHROMO_LENGTH; i++){
+			neighbour_count[i] = 0;
 		}
-		if (neighbour_count[node] < least_neighbours_count){
-			least_neighbours_node = node;
+		
+		//Void out added node
+		for (int i = 0; i<MAX_NEIGHBOURS; i++){
+			adj_matrix[addedNode][i] = 99;
 		}
+
+		//Find out least node
+		for (int node = 0; node<CHROMO_LENGTH; node++){
+			for (int neighbour = 0; neighbour<MAX_NEIGHBOURS; neighbour++){
+				if (adj_matrix[node][neighbour] == addedNode)
+					adj_matrix[node][neighbour] = -1;
+				
+				if (adj_matrix[node][neighbour] == -1)
+					continue;
+				else
+					neighbour_count[node]++;
+			}
+			if (neighbour_count[node] < least_neighbours_count){
+				least_neighbours_count = neighbour_count[node];
+				least_neighbours_node.clear();
+				least_neighbours_node.push_back(node);
+			}
+			else if (neighbour_count[node] == least_neighbours_count){
+				least_neighbours_node.push_back(node);
+			}
+		}
+		
+		float nodeProbSelect = static_cast<float>(1.0/least_neighbours_node.size());
+		float randomNodeProb = RANDOM_FLOAT;
+		
+		int i = 1;
+		
+		while(randomNodeProb > i*nodeProbSelect){
+			i++;
+		}
+		newPath[newPathLength] = least_neighbours_node[i-1];
+		
+		addedNode = newPath[newPathLength];
 	}
-	
 	
 	return new Chromosome(newPath);
 }
@@ -209,13 +240,23 @@ int main(){
 		}
 	}
 	
+	cout << cr1 << cr2;
+	
 	//Edge Recombination Operator
 	if (RANDOM_FLOAT < RECOM_CHANCE){
 		updateAdjMatrix(cr1, adj_matrix);
 		updateAdjMatrix(cr2, adj_matrix);
+
+		//Copy adjacency matrix
+		int adj_matrix_copy[CHROMO_LENGTH][MAX_NEIGHBOURS];
+		for (int i = 0; i<CHROMO_LENGTH; i++){
+			for (int j = 0; j<MAX_NEIGHBOURS; j++){
+				adj_matrix_copy[i][j] = adj_matrix[i][j];
+			}
+		}
 		
 		Chromosome *temp1 = edge_recom(cr1, cr2, adj_matrix);
-		Chromosome *temp2 = edge_recom(cr1, cr2, adj_matrix);
+		Chromosome *temp2 = edge_recom(cr1, cr2, adj_matrix_copy);
 		
 		cr1 = *temp1;
 		cr2 = *temp2;
