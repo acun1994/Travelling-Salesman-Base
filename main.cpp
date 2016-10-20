@@ -4,19 +4,42 @@
 #include <iomanip>
 #include <vector>
 
-#define MAX_ALLOW_GEN 1000
-#define CHROMO_LENGTH 5
+#include <windows.h>    // Win32API Header File
+#include <cstring>
+#include <cstdio>
+#include <unistd.h>
+
+
+#define MAX_ALLOW_GEN 10000
+#define CHROMO_LENGTH 30
 #define POOL_SIZE 100
 #define MAX_NEIGHBOURS 4 //Set equal to 2*number of parents in edge recombination operator, default = 4
-#define RECOM_CHANCE 0.2
+#define RECOM_CHANCE 0.8
+#define MUT_CHANCE 0.05
+#define UPDATE_INTERVAL 10
+#define REINSERT_CHANCE 0.05
 #define RANDOM_FLOAT static_cast<float>(rand())/static_cast<float>(RAND_MAX)
+
+#define Red  RGB (255,0,0)
+#define Lime RGB (206,255,0)
+#define Blue RGB (0,0,255)
+
+#define Xoffset1 100
+#define Xoffset2 800
+#define Yoffset 200
 
 using namespace std;
 
+static HWND    hConWnd;
+int     BCX_Line (HWND,int,int,int,int,int=0,HDC=0);
+int     BCX_Circle (HWND,int,int,int,int=0,int=0,HDC=0);
+HWND    GetConsoleWndHandle (void);
+
 class Node{
 	private:
-		int x = 0, y = 0;
+		
 	public:
+		int x = 0, y = 0;
 		Node(int param_x, int param_y){
 			x = param_x;
 			y = param_y;
@@ -25,13 +48,22 @@ class Node{
 		}
 		
 		friend float const calcDistance(Node &n1, Node &n2);
+		
+		friend ostream &operator<<(ostream &os, const vector<Node> &obj){
+			for (int i = 0; i<CHROMO_LENGTH; i++){
+				cout << "[" << setw(2) << i << "] = (" << setw(2) << obj[i].x << "," << setw(2) << obj[i].y << ")" << endl;
+			}
+			
+			return os;
+		}
 };
 
 class Chromosome{
 	private:
-		int path[CHROMO_LENGTH];
+		
 		
 	public:
+		int path[CHROMO_LENGTH];
 		Chromosome(){
 			bool nodeUsed[CHROMO_LENGTH];
 			
@@ -82,6 +114,15 @@ class Chromosome{
 		friend Chromosome* edge_recom(Chromosome&, Chromosome&,int adj_matrix[][MAX_NEIGHBOURS]);
 		
 		friend void updateAdjMatrix(Chromosome&, int[][MAX_NEIGHBOURS]);
+		
+		void mutate(){
+			int rand1 = rand()%CHROMO_LENGTH;
+			int rand2 = rand()%CHROMO_LENGTH;
+			
+			int temp = path[rand1];
+			path[rand1] = path[rand2];
+			path[rand2] = temp;
+		}
 };
 
 //FX to generate Node Map
@@ -97,7 +138,7 @@ vector<Node> genNodes(int numNodes){
 	return temp;
 }
 
-//FX to calculate Distace between 2 nodes
+//FX to calculate Distance between 2 nodes
 float const calcDistance(Node &n1, Node &n2){
 	return sqrt(static_cast<float>(pow((n1.x-n2.x),2)) + static_cast<float>(pow((n1.y-n2.y),2)));
 }
@@ -205,64 +246,279 @@ Chromosome* edge_recom(Chromosome &cr1, Chromosome &cr2, int adj_matrix[][MAX_NE
 }
 
 int main(){
-	// Seed RNG
+ 	// Seed RNG
 	srand(time(NULL));
 	
 	// Generate node map
-	vector<Node> nodeList = genNodes(15);
+	vector<Node> nodeList = genNodes(CHROMO_LENGTH);
 	
 	// Generate chromosome pool
 	vector<Chromosome> chromoPool;
 
-	vector<Chromosome>::iterator poolIt = chromoPool.begin();
-	
 	for (int i=0; i<POOL_SIZE; i++){
 		Chromosome cr;
-		poolIt = chromoPool.insert(poolIt, cr);
+		chromoPool.push_back(cr);
 		// DEBUG: Displays Chromosome path after insertion into pool
 		// cout << cr;
 	}
 	
+	Chromosome bestEver;
+	Chromosome bestThisGen;
+	int bestEverAtGen = 0;
+	vector<int> bestTracker;
+	
 	for (int iter = 1; iter <= MAX_ALLOW_GEN; iter++){
-		//EVO CODE HERE
-	}
-	
-	//LOOP FOR SELECTION HERE
-
-	//Parent Chromosome selection here
-	Chromosome cr1, cr2;
-	
-	int adj_matrix[CHROMO_LENGTH][MAX_NEIGHBOURS];
-
-	for (int i=0; i<CHROMO_LENGTH; i++){
-		for (int j=0; j<MAX_NEIGHBOURS; j++){
-			adj_matrix[i][j] = -1;
+		
+		//DEBUG Display Chromosome Pool
+		/*
+		cout << " ==== POOL " << iter << " ==== " << endl;
+		for (int i = 0; i<POOL_SIZE; i++){
+			cout << chromoPool[i] << "\t" << chromoPool[i].evaluate(nodeList) << endl;
 		}
-	}
-	
-	cout << cr1 << cr2;
-	
-	//Edge Recombination Operator
-	if (RANDOM_FLOAT < RECOM_CHANCE){
-		updateAdjMatrix(cr1, adj_matrix);
-		updateAdjMatrix(cr2, adj_matrix);
+		cin.get();
+		*/
 
-		//Copy adjacency matrix
-		int adj_matrix_copy[CHROMO_LENGTH][MAX_NEIGHBOURS];
-		for (int i = 0; i<CHROMO_LENGTH; i++){
-			for (int j = 0; j<MAX_NEIGHBOURS; j++){
-				adj_matrix_copy[i][j] = adj_matrix[i][j];
+		bestThisGen = chromoPool[0];
+		
+		//EVAL CODE
+		float fitness[POOL_SIZE];
+		float cumulativeProb[POOL_SIZE];
+		float curCumProb = 0.0;
+		float curTotalFitness = 0.0;
+		float curWorstFitness = 0.0;
+		int trackWorst = -1;
+		
+		// Eval all chromosomes, find worst fitness
+		for (int chromoNum = 0; chromoNum<POOL_SIZE; chromoNum++){
+			fitness[chromoNum] = chromoPool[chromoNum].evaluate(nodeList);
+			
+			if (fitness[chromoNum] > curWorstFitness){
+				curWorstFitness = fitness[chromoNum];
+				trackWorst = chromoNum;
+				//DEBUG : Show worst ftiness this gen
+				//cout << " Worst" <<  curWorstFitness << endl;
+			}
+			
+			if (fitness[chromoNum] < bestEver.evaluate(nodeList)){
+				bestEver = Chromosome(chromoPool[chromoNum]);
+				bestEverAtGen = iter;
+				bestTracker.push_back(iter);
+			}
+			
+			if (fitness[chromoNum] < bestThisGen.evaluate(nodeList)){
+				bestThisGen = Chromosome(chromoPool[chromoNum]);
 			}
 		}
 		
-		Chromosome *temp1 = edge_recom(cr1, cr2, adj_matrix);
-		Chromosome *temp2 = edge_recom(cr1, cr2, adj_matrix_copy);
+		// Reinsert best ever chromosome into the pool, replacing the worst this generation
+		if (RANDOM_FLOAT < REINSERT_CHANCE){
+			chromoPool.erase(chromoPool.begin() + trackWorst);
+			chromoPool.insert(chromoPool.begin() + trackWorst, bestEver);
+			
+			fitness[trackWorst] = bestEver.evaluate(nodeList);
+		}
 		
-		cr1 = *temp1;
-		cr2 = *temp2;
+		// Adjust all fitness, sum total adjusted fitness
+		for (int chromoNum = 0; chromoNum<POOL_SIZE; chromoNum++){
+			//DEBUG : Show Pre-adjust fitness
+			//cout << " Fitness " <<  fitness[chromoNum] << endl;
+			fitness[chromoNum] = pow((-fitness[chromoNum] + curWorstFitness),2);
+			
+			curTotalFitness += fitness[chromoNum];
+		}
+		
+		// Calculate cumulative probability
+		for (int chromoNum = 0; chromoNum<POOL_SIZE; chromoNum++){
+			curCumProb += fitness[chromoNum] / curTotalFitness;
+			cumulativeProb[chromoNum] = curCumProb;
+		}
+		//DEBUG : Show Cumulative Prob
+		//for (int chromoNum = 0; chromoNum<POOL_SIZE; chromoNum++)			cout << cumulativeProb[chromoNum] << endl;
+		
+		//DEBUG : Show best and worst fitness every gen
+		if (iter%UPDATE_INTERVAL==1){
+			system("CLS");
+		}
+		else{
+			HANDLE hOutput = ::GetStdHandle(STD_OUTPUT_HANDLE);
+
+		   	COORD coord = {0,0};
+		   	::SetConsoleCursorPosition(hOutput, coord);
+
+		   	char buff[] = "\n\n\n\n\n\n";
+		   	::WriteConsoleA(hOutput, buff, 6, NULL, NULL);
+		   	
+		   	::SetConsoleCursorPosition(hOutput, coord);
+		}
+		
+		cout << "   Worst for gen " << setw(4) << iter << " : " << curWorstFitness << endl;
+		cout << "    Best for gen " << setw(4) << iter << " : " << bestThisGen << " = " << bestThisGen.evaluate(nodeList)<< endl;
+		cout << "Best ever at gen " << setw(4) << bestEverAtGen<< " : " << bestEver << " = " << bestEver.evaluate(nodeList)<< endl;
+		cout << "Best updated at : ";
+		
+		for (int i = 0; i<bestTracker.size(); i++){
+			cout << setw(4) << bestTracker[i] << " ";
+		}
+		
+		hConWnd = GetConsoleWndHandle();
+		if (hConWnd && iter%UPDATE_INTERVAL==1)
+		{
+			for (int i = 0; i<CHROMO_LENGTH; i++){
+				BCX_Line(hConWnd, nodeList[bestThisGen.path[i]].x*5+Xoffset1, nodeList[bestThisGen.path[i]].y*5+Yoffset, nodeList[bestThisGen.path[i==CHROMO_LENGTH-1?0:i+1]].x*5+Xoffset1, nodeList[bestThisGen.path[i==CHROMO_LENGTH-1?0:i+1]].y*5+Yoffset, Red);
+				BCX_Circle(hConWnd, nodeList[i].x*5+Xoffset1, nodeList[i].y*5+Yoffset, 3, Blue, Blue);
+				
+				BCX_Line(hConWnd, nodeList[bestEver.path[i]].x*5+Xoffset2, nodeList[bestEver.path[i]].y*5+Yoffset, nodeList[bestEver.path[i==CHROMO_LENGTH-1?0:i+1]].x*5+Xoffset2, nodeList[bestEver.path[i==CHROMO_LENGTH-1?0:i+1]].y*5+Yoffset, Blue);
+				BCX_Circle(hConWnd, nodeList[i].x*5+Xoffset2, nodeList[i].y*5+Yoffset, 3, Red, Red);
+		  	}
+		  	//nanosleep((const struct timespec[]){{0, 100000000L}}, NULL);
+		}
+
+		
+		//LOOP FOR SELECTION
+		vector<Chromosome> newPool;
+		
+		for (int newGenPop = 0; newGenPop<POOL_SIZE; newGenPop+=2){
+			float rand1 = RANDOM_FLOAT;
+			float rand2 = RANDOM_FLOAT;
+			
+			//Parent Chromosome selection
+			Chromosome cr1;
+			Chromosome cr2;
+			
+			for (int searchChromo = 0; searchChromo < POOL_SIZE; searchChromo++){
+				if (rand1 < cumulativeProb[searchChromo]){
+					cr1 = Chromosome(chromoPool[searchChromo]);
+					rand1 = 999;
+				}
+				if (rand2 < cumulativeProb[searchChromo]){
+					cr2 = Chromosome(chromoPool[searchChromo]);
+					rand2 = 999;
+				}
+				if (rand1 == 999 &&  rand2 == 999){
+					break;
+				}
+			}
+
+			//Edge Recombination Operator
+			if (RANDOM_FLOAT < RECOM_CHANCE){
+				
+				//Reset Adjacency Matrix
+				int adj_matrix[CHROMO_LENGTH][MAX_NEIGHBOURS];
+
+				for (int i=0; i<CHROMO_LENGTH; i++){
+					for (int j=0; j<MAX_NEIGHBOURS; j++){
+						adj_matrix[i][j] = -1;
+					}
+				}
+				
+				updateAdjMatrix(cr1, adj_matrix);
+				updateAdjMatrix(cr2, adj_matrix);
+
+				//Copy adjacency matrix
+				int adj_matrix_copy[CHROMO_LENGTH][MAX_NEIGHBOURS];
+				for (int i = 0; i<CHROMO_LENGTH; i++){
+					for (int j = 0; j<MAX_NEIGHBOURS; j++){
+						adj_matrix_copy[i][j] = adj_matrix[i][j];
+					}
+				}
+
+				Chromosome *temp1 = edge_recom(cr1, cr2, adj_matrix);
+				Chromosome *temp2 = edge_recom(cr1, cr2, adj_matrix_copy);
+
+				cr1 = *temp1;
+				cr2 = *temp2;
+			}
+			
+			newPool.push_back(cr1);
+			newPool.push_back(cr2);
+		}
+		chromoPool.clear();
+		chromoPool.assign(newPool.begin(), newPool.end());
+  		newPool.clear();
+  		
+  		for (int i = 0; i<POOL_SIZE; i++){
+  			if (RANDOM_FLOAT < MUT_CHANCE){
+  				chromoPool[i].mutate();
+  			}
+  		}
 	}
-	
-	cout << cr1 << cr2;
 
 	return 0;
+}
+
+int BCX_Line (HWND Wnd,int x1,int y1,int x2,int y2,int Pen,HDC DrawHDC)
+{
+  int a,b=0;
+  HPEN hOPen;
+  // penstyle, width, color
+  HPEN hNPen = CreatePen(PS_SOLID, 2, Pen);
+  if (!DrawHDC) DrawHDC = GetDC(Wnd), b = 1;
+  hOPen = (HPEN)SelectObject(DrawHDC, hNPen);
+  // starting point of line
+  MoveToEx(DrawHDC, x1, y1, NULL);
+  // ending point of line
+  a = LineTo(DrawHDC, x2, y2);
+  DeleteObject(SelectObject(DrawHDC, hOPen));
+  if (b) ReleaseDC(Wnd, DrawHDC);
+  return a;
+}
+// converts circle(centerX,centerY,radius,pen) to WinApi function
+// ellipse inside box with upper left and lower right coordinates
+int BCX_Circle(HWND Wnd,int X,int Y,int R,int Pen,int Fill,HDC DrawHDC)
+{
+  int a, b = 0;
+  if (!DrawHDC) DrawHDC = GetDC(Wnd), b = 1;
+  // penstyle, width, color
+  HPEN   hNPen = CreatePen(PS_SOLID, 2, Pen);
+  HPEN   hOPen = (HPEN)SelectObject(DrawHDC, hNPen);
+  HBRUSH hOldBrush;
+  HBRUSH hNewBrush;
+  // if true will fill circle with pencolor
+  if (Fill)
+  {
+    hNewBrush = CreateSolidBrush(Pen);
+    hOldBrush = (HBRUSH)SelectObject(DrawHDC, hNewBrush);
+  }
+  else
+  {
+    hNewBrush = (HBRUSH)GetStockObject(NULL_BRUSH);
+    hOldBrush = (HBRUSH)SelectObject(DrawHDC, hNewBrush);
+  }
+  a = Ellipse(DrawHDC, X-R, Y+R, X+R, Y-R);
+  DeleteObject(SelectObject(DrawHDC, hOPen));
+  DeleteObject(SelectObject(DrawHDC, hOldBrush));
+  if (b) ReleaseDC(Wnd, DrawHDC);
+  return a;
+}
+// the hoop ...
+HWND GetConsoleWndHandle(void)
+{
+  HWND hConWnd;
+  OSVERSIONINFO os;
+  char szTempTitle[64], szClassName[128], szOriginalTitle[1024];
+  os.dwOSVersionInfoSize = sizeof( OSVERSIONINFO );
+  GetVersionEx( &os );
+  // may not work on WIN9x
+  if ( os.dwPlatformId == VER_PLATFORM_WIN32s ) return 0;
+  GetConsoleTitle( szOriginalTitle, sizeof( szOriginalTitle ) );
+  sprintf( szTempTitle,"%u - %u", GetTickCount(), GetCurrentProcessId() );
+  SetConsoleTitle( szTempTitle );
+  Sleep( 40 );
+  // handle for NT
+  hConWnd = FindWindow( NULL, szTempTitle );
+  SetConsoleTitle( szOriginalTitle );
+  // may not work on WIN9x
+  if ( os.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS )
+  {
+    hConWnd = GetWindow( hConWnd, GW_CHILD );
+    if ( hConWnd == NULL )  return 0;
+    GetClassName( hConWnd, szClassName, sizeof ( szClassName ) );
+    while ( strcmp( szClassName, "ttyGrab" ) != 0 )
+    {
+      hConWnd = GetNextWindow( hConWnd, GW_HWNDNEXT );
+      if ( hConWnd == NULL )  return 0;
+      GetClassName( hConWnd, szClassName, sizeof( szClassName ) );
+    }
+  }
+  return hConWnd;
 }
