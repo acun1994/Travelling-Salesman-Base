@@ -3,6 +3,7 @@
 #include <cmath>
 #include <iomanip>
 #include <vector>
+#include <chrono>
 
 #include <windows.h>    // Win32API Header File
 #include <cstring>
@@ -10,23 +11,27 @@
 #include <unistd.h>
 
 
-#define MAX_ALLOW_GEN 10000
-#define CHROMO_LENGTH 30
-#define POOL_SIZE 100
+#define MAX_ALLOW_GEN 50000
+#define CHROMO_LENGTH 50
+#define POOL_SIZE 200
 #define MAX_NEIGHBOURS 4 //Set equal to 2*number of parents in edge recombination operator, default = 4
-#define RECOM_CHANCE 0.8
+#define RECOM_CHANCE 0.5
 #define MUT_CHANCE 0.05
-#define UPDATE_INTERVAL 10
+#define UPDATE_INTERVAL 10 //The number of generations evaluated before a screen redraw of the best chromosomes, lower will be more frequent updates, at cost of performance
 #define REINSERT_CHANCE 0.05
+#define REINSERT_GEN static_cast<int>(MAX_ALLOW_GEN/20) //The number of generations required to pass before algorithm tries to reinsert best chromosome into the pool
+#define SELECT_PRESSURE 1.5 //Default to 1, Higher numbers bias selection towards better fitness
 #define RANDOM_FLOAT static_cast<float>(rand())/static_cast<float>(RAND_MAX)
 
 #define Red  RGB (255,0,0)
 #define Lime RGB (206,255,0)
 #define Blue RGB (0,0,255)
 
+#define XScalar 4
+#define YScalar 4
 #define Xoffset1 100
-#define Xoffset2 800
-#define Yoffset 200
+#define Xoffset2 Xoffset1+600
+#define Yoffset 250
 
 using namespace std;
 
@@ -245,8 +250,34 @@ Chromosome* edge_recom(Chromosome &cr1, Chromosome &cr2, int adj_matrix[][MAX_NE
 	return new Chromosome(newPath);
 }
 
+std::ostream&
+display(std::ostream& os, std::chrono::nanoseconds ns)
+{
+    using namespace std;
+    using namespace std::chrono;
+    typedef duration<int, ratio<86400>> days;
+    char fill = os.fill();
+    os.fill('0');
+    auto d = duration_cast<days>(ns);
+    ns -= d;
+    auto h = duration_cast<hours>(ns);
+    ns -= h;
+    auto m = duration_cast<minutes>(ns);
+    ns -= m;
+    auto s = duration_cast<seconds>(ns);
+    os << setw(2) << d.count() << "d:"
+       << setw(2) << h.count() << "h:"
+       << setw(2) << m.count() << "m:"
+       << setw(2) << s.count() << 's';
+    os.fill(fill);
+    return os;
+};
+
 int main(){
- 	// Seed RNG
+	
+	std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
+
+    // Seed RNG
 	srand(time(NULL));
 	
 	// Generate node map
@@ -268,7 +299,7 @@ int main(){
 	vector<int> bestTracker;
 	
 	for (int iter = 1; iter <= MAX_ALLOW_GEN; iter++){
-		
+
 		//DEBUG Display Chromosome Pool
 		/*
 		cout << " ==== POOL " << iter << " ==== " << endl;
@@ -310,8 +341,9 @@ int main(){
 			}
 		}
 		
-		// Reinsert best ever chromosome into the pool, replacing the worst this generation
-		if (RANDOM_FLOAT < REINSERT_CHANCE){
+		// Randomly reinsert best ever chromosome into the pool, replacing the worst this generation
+		// If iterations since last improvment > REINSERT_GEN
+		if ((iter - bestTracker.back()) > REINSERT_GEN && RANDOM_FLOAT < REINSERT_CHANCE){
 			chromoPool.erase(chromoPool.begin() + trackWorst);
 			chromoPool.insert(chromoPool.begin() + trackWorst, bestEver);
 			
@@ -322,7 +354,7 @@ int main(){
 		for (int chromoNum = 0; chromoNum<POOL_SIZE; chromoNum++){
 			//DEBUG : Show Pre-adjust fitness
 			//cout << " Fitness " <<  fitness[chromoNum] << endl;
-			fitness[chromoNum] = pow((-fitness[chromoNum] + curWorstFitness),2);
+			fitness[chromoNum] = pow((-fitness[chromoNum] + curWorstFitness),SELECT_PRESSURE);
 			
 			curTotalFitness += fitness[chromoNum];
 		}
@@ -350,10 +382,15 @@ int main(){
 		   	
 		   	::SetConsoleCursorPosition(hOutput, coord);
 		}
+
+    	chrono::duration<double> elapsed_seconds = chrono::system_clock::now()-start;
+	
+        cout << "   Elapsed time : " << setw(6) << setprecision(5) << fixed << elapsed_seconds.count() << "s\n";
+        cout << "Avg time per gen: " << setw(6) << setprecision(5) << fixed << elapsed_seconds.count()/iter << "s" << endl;
 		
 		cout << "   Worst for gen " << setw(4) << iter << " : " << curWorstFitness << endl;
-		cout << "    Best for gen " << setw(4) << iter << " : " << bestThisGen << " = " << bestThisGen.evaluate(nodeList)<< endl;
-		cout << "Best ever at gen " << setw(4) << bestEverAtGen<< " : " << bestEver << " = " << bestEver.evaluate(nodeList)<< endl;
+		cout << "    Best for gen " << setw(4) << iter << " : " << bestThisGen.evaluate(nodeList)<< endl;
+		cout << "Best ever at gen " << setw(4) << bestEverAtGen<< " : " << bestEver.evaluate(nodeList)<< endl;
 		cout << "Best updated at : ";
 		
 		for (int i = 0; i<bestTracker.size(); i++){
@@ -364,11 +401,11 @@ int main(){
 		if (hConWnd && iter%UPDATE_INTERVAL==1)
 		{
 			for (int i = 0; i<CHROMO_LENGTH; i++){
-				BCX_Line(hConWnd, nodeList[bestThisGen.path[i]].x*5+Xoffset1, nodeList[bestThisGen.path[i]].y*5+Yoffset, nodeList[bestThisGen.path[i==CHROMO_LENGTH-1?0:i+1]].x*5+Xoffset1, nodeList[bestThisGen.path[i==CHROMO_LENGTH-1?0:i+1]].y*5+Yoffset, Red);
-				BCX_Circle(hConWnd, nodeList[i].x*5+Xoffset1, nodeList[i].y*5+Yoffset, 3, Blue, Blue);
+				BCX_Line(hConWnd, nodeList[bestThisGen.path[i]].x*XScalar+Xoffset1, nodeList[bestThisGen.path[i]].y*YScalar+Yoffset, nodeList[bestThisGen.path[i==CHROMO_LENGTH-1?0:i+1]].x*XScalar+Xoffset1, nodeList[bestThisGen.path[i==CHROMO_LENGTH-1?0:i+1]].y*YScalar+Yoffset, Red);
+				BCX_Circle(hConWnd, nodeList[i].x*XScalar+Xoffset1, nodeList[i].y*YScalar+Yoffset, 3, Blue, Blue);
 				
-				BCX_Line(hConWnd, nodeList[bestEver.path[i]].x*5+Xoffset2, nodeList[bestEver.path[i]].y*5+Yoffset, nodeList[bestEver.path[i==CHROMO_LENGTH-1?0:i+1]].x*5+Xoffset2, nodeList[bestEver.path[i==CHROMO_LENGTH-1?0:i+1]].y*5+Yoffset, Blue);
-				BCX_Circle(hConWnd, nodeList[i].x*5+Xoffset2, nodeList[i].y*5+Yoffset, 3, Red, Red);
+				BCX_Line(hConWnd, nodeList[bestEver.path[i]].x*XScalar+Xoffset2, nodeList[bestEver.path[i]].y*YScalar+Yoffset, nodeList[bestEver.path[i==CHROMO_LENGTH-1?0:i+1]].x*XScalar+Xoffset2, nodeList[bestEver.path[i==CHROMO_LENGTH-1?0:i+1]].y*YScalar+Yoffset, Blue);
+				BCX_Circle(hConWnd, nodeList[i].x*XScalar+Xoffset2, nodeList[i].y*YScalar+Yoffset, 3, Red, Red);
 		  	}
 		  	//nanosleep((const struct timespec[]){{0, 100000000L}}, NULL);
 		}
@@ -442,8 +479,15 @@ int main(){
   			}
   		}
 	}
+	std::chrono::time_point<std::chrono::system_clock> end = std::chrono::system_clock::now();
+	std::time_t end_time = std::chrono::system_clock::to_time_t(end);
+	std::time_t start_time = std::chrono::system_clock::to_time_t(start);
+	cout << endl << " Started computation at " << std::ctime(&start_time);
+	cout << endl << "Finished computation at " << std::ctime(&end_time);
 
-	return 0;
+	system("PAUSE");
+
+ 	return 0;
 }
 
 int BCX_Line (HWND Wnd,int x1,int y1,int x2,int y2,int Pen,HDC DrawHDC)
