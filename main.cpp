@@ -15,12 +15,13 @@
 #define CHROMO_LENGTH 50
 #define POOL_SIZE 200
 #define MAX_NEIGHBOURS 4 //Set equal to 2*number of parents in edge recombination operator, default = 4
-#define RECOM_CHANCE 0.5
+#define RECOM_CHANCE 0.2
 #define MUT_CHANCE 0.05
-#define UPDATE_INTERVAL 10 //The number of generations evaluated before a screen redraw of the best chromosomes, lower will be more frequent updates, at cost of performance
+#define UPDATE_INTERVAL 20 //The number of generations evaluated before a screen redraw of the best chromosomes, lower will be more frequent updates, at cost of performance
 #define REINSERT_CHANCE 0.05
 #define REINSERT_GEN static_cast<int>(MAX_ALLOW_GEN/20) //The number of generations required to pass before algorithm tries to reinsert best chromosome into the pool
 #define SELECT_PRESSURE 1.5 //Default to 1, Higher numbers bias selection towards better fitness
+#define DIFF_FRACTION_BEST 0.25 //The threshold for random reinsertion of best chromosome, triggers when difference of gen best with world best > fraction of best
 #define RANDOM_FLOAT static_cast<float>(rand())/static_cast<float>(RAND_MAX)
 
 #define Red  RGB (255,0,0)
@@ -343,7 +344,7 @@ int main(){
 		
 		// Randomly reinsert best ever chromosome into the pool, replacing the worst this generation
 		// If iterations since last improvment > REINSERT_GEN
-		if ((iter - bestTracker.back()) > REINSERT_GEN && RANDOM_FLOAT < REINSERT_CHANCE){
+		if (((iter - bestTracker.back()) > REINSERT_GEN)||((bestThisGen.evaluate(nodeList) - bestEver.evaluate(nodeList)) >= (DIFF_FRACTION_BEST*bestEver.evaluate(nodeList))) && RANDOM_FLOAT < REINSERT_CHANCE){
 			chromoPool.erase(chromoPool.begin() + trackWorst);
 			chromoPool.insert(chromoPool.begin() + trackWorst, bestEver);
 			
@@ -402,10 +403,10 @@ int main(){
 		{
 			for (int i = 0; i<CHROMO_LENGTH; i++){
 				BCX_Line(hConWnd, nodeList[bestThisGen.path[i]].x*XScalar+Xoffset1, nodeList[bestThisGen.path[i]].y*YScalar+Yoffset, nodeList[bestThisGen.path[i==CHROMO_LENGTH-1?0:i+1]].x*XScalar+Xoffset1, nodeList[bestThisGen.path[i==CHROMO_LENGTH-1?0:i+1]].y*YScalar+Yoffset, Red);
-				BCX_Circle(hConWnd, nodeList[i].x*XScalar+Xoffset1, nodeList[i].y*YScalar+Yoffset, 3, Blue, Blue);
+				BCX_Circle(hConWnd, nodeList[i].x*XScalar+Xoffset1, nodeList[i].y*YScalar+Yoffset, 2, Blue, Blue);
 				
 				BCX_Line(hConWnd, nodeList[bestEver.path[i]].x*XScalar+Xoffset2, nodeList[bestEver.path[i]].y*YScalar+Yoffset, nodeList[bestEver.path[i==CHROMO_LENGTH-1?0:i+1]].x*XScalar+Xoffset2, nodeList[bestEver.path[i==CHROMO_LENGTH-1?0:i+1]].y*YScalar+Yoffset, Blue);
-				BCX_Circle(hConWnd, nodeList[i].x*XScalar+Xoffset2, nodeList[i].y*YScalar+Yoffset, 3, Red, Red);
+				BCX_Circle(hConWnd, nodeList[i].x*XScalar+Xoffset2, nodeList[i].y*YScalar+Yoffset, 2, Red, Red);
 		  	}
 		  	//nanosleep((const struct timespec[]){{0, 100000000L}}, NULL);
 		}
