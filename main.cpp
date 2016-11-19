@@ -10,36 +10,40 @@
 #include <cstdio>
 #include <unistd.h>
 
+int iter = 0;
 
-#define MAX_ALLOW_GEN 50000
 #define CHROMO_LENGTH 50
-#define POOL_SIZE 200
+#define MAX_ALLOW_GEN CHROMO_LENGTH*5000
+#define POOL_SIZE 100
 #define MAX_NEIGHBOURS 4 //Set equal to 2*number of parents in edge recombination operator, default = 4
 #define RECOM_CHANCE 0.2
 #define MUT_CHANCE 0.05
 #define UPDATE_INTERVAL 20 //The number of generations evaluated before a screen redraw of the best chromosomes, lower will be more frequent updates, at cost of performance
-#define REINSERT_CHANCE 0.05
-#define REINSERT_GEN static_cast<int>(MAX_ALLOW_GEN/20) //The number of generations required to pass before algorithm tries to reinsert best chromosome into the pool
-#define SELECT_PRESSURE 1.5 //Default to 1, Higher numbers bias selection towards better fitness
+#define REINSERT_CHANCE 0.005
+#define REINSERT_GEN static_cast<int>(min(1000,(MAX_ALLOW_GEN/50))) //The number of generations required to pass before algorithm tries to reinsert best chromosome into the pool
+#define SELECT_PRESSURE (iter<MAX_ALLOW_GEN/2)?0.5:1.5 //Default to 1, Higher numbers bias selection towards better fitness
 #define DIFF_FRACTION_BEST 0.25 //The threshold for random reinsertion of best chromosome, triggers when difference of gen best with world best > fraction of best
 #define RANDOM_FLOAT static_cast<float>(rand())/static_cast<float>(RAND_MAX)
+#define HARD_THRESHOLD MAX_ALLOW_GEN/10 // Forces exit if HARD_THRESHOLD generations have passed without improvement of global best. set to MAX_ALLOW_GEN for no hard_threshold
 
 #define Red  RGB (255,0,0)
 #define Lime RGB (206,255,0)
 #define Blue RGB (0,0,255)
 
-#define XScalar 4
-#define YScalar 4
+#define XScalar 5
+#define YScalar 5
 #define Xoffset1 100
 #define Xoffset2 Xoffset1+600
-#define Yoffset 250
+#define Yoffset 225
+#define CircleRadius static_cast<int>(XScalar+1/2)
 
 using namespace std;
 
-static HWND    hConWnd;
+HWND    GetConsoleWndHandle (void);
+static HWND    hConWnd = GetConsoleWndHandle();
 int     BCX_Line (HWND,int,int,int,int,int=0,HDC=0);
 int     BCX_Circle (HWND,int,int,int,int=0,int=0,HDC=0);
-HWND    GetConsoleWndHandle (void);
+
 
 class Node{
 	private:
@@ -274,223 +278,6 @@ display(std::ostream& os, std::chrono::nanoseconds ns)
     return os;
 };
 
-int main(){
-	
-	std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
-
-    // Seed RNG
-	srand(time(NULL));
-	
-	// Generate node map
-	vector<Node> nodeList = genNodes(CHROMO_LENGTH);
-	
-	// Generate chromosome pool
-	vector<Chromosome> chromoPool;
-
-	for (int i=0; i<POOL_SIZE; i++){
-		Chromosome cr;
-		chromoPool.push_back(cr);
-		// DEBUG: Displays Chromosome path after insertion into pool
-		// cout << cr;
-	}
-	
-	Chromosome bestEver;
-	Chromosome bestThisGen;
-	int bestEverAtGen = 0;
-	vector<int> bestTracker;
-	
-	for (int iter = 1; iter <= MAX_ALLOW_GEN; iter++){
-
-		//DEBUG Display Chromosome Pool
-		/*
-		cout << " ==== POOL " << iter << " ==== " << endl;
-		for (int i = 0; i<POOL_SIZE; i++){
-			cout << chromoPool[i] << "\t" << chromoPool[i].evaluate(nodeList) << endl;
-		}
-		cin.get();
-		*/
-
-		bestThisGen = chromoPool[0];
-		
-		//EVAL CODE
-		float fitness[POOL_SIZE];
-		float cumulativeProb[POOL_SIZE];
-		float curCumProb = 0.0;
-		float curTotalFitness = 0.0;
-		float curWorstFitness = 0.0;
-		int trackWorst = -1;
-		
-		// Eval all chromosomes, find worst fitness
-		for (int chromoNum = 0; chromoNum<POOL_SIZE; chromoNum++){
-			fitness[chromoNum] = chromoPool[chromoNum].evaluate(nodeList);
-			
-			if (fitness[chromoNum] > curWorstFitness){
-				curWorstFitness = fitness[chromoNum];
-				trackWorst = chromoNum;
-				//DEBUG : Show worst ftiness this gen
-				//cout << " Worst" <<  curWorstFitness << endl;
-			}
-			
-			if (fitness[chromoNum] < bestEver.evaluate(nodeList)){
-				bestEver = Chromosome(chromoPool[chromoNum]);
-				bestEverAtGen = iter;
-				bestTracker.push_back(iter);
-			}
-			
-			if (fitness[chromoNum] < bestThisGen.evaluate(nodeList)){
-				bestThisGen = Chromosome(chromoPool[chromoNum]);
-			}
-		}
-		
-		// Randomly reinsert best ever chromosome into the pool, replacing the worst this generation
-		// If iterations since last improvment > REINSERT_GEN
-		if (((iter - bestTracker.back()) > REINSERT_GEN)||((bestThisGen.evaluate(nodeList) - bestEver.evaluate(nodeList)) >= (DIFF_FRACTION_BEST*bestEver.evaluate(nodeList))) && RANDOM_FLOAT < REINSERT_CHANCE){
-			chromoPool.erase(chromoPool.begin() + trackWorst);
-			chromoPool.insert(chromoPool.begin() + trackWorst, bestEver);
-			
-			fitness[trackWorst] = bestEver.evaluate(nodeList);
-		}
-		
-		// Adjust all fitness, sum total adjusted fitness
-		for (int chromoNum = 0; chromoNum<POOL_SIZE; chromoNum++){
-			//DEBUG : Show Pre-adjust fitness
-			//cout << " Fitness " <<  fitness[chromoNum] << endl;
-			fitness[chromoNum] = pow((-fitness[chromoNum] + curWorstFitness),SELECT_PRESSURE);
-			
-			curTotalFitness += fitness[chromoNum];
-		}
-		
-		// Calculate cumulative probability
-		for (int chromoNum = 0; chromoNum<POOL_SIZE; chromoNum++){
-			curCumProb += fitness[chromoNum] / curTotalFitness;
-			cumulativeProb[chromoNum] = curCumProb;
-		}
-		//DEBUG : Show Cumulative Prob
-		//for (int chromoNum = 0; chromoNum<POOL_SIZE; chromoNum++)			cout << cumulativeProb[chromoNum] << endl;
-		
-		//DEBUG : Show best and worst fitness every gen
-		if (iter%UPDATE_INTERVAL==1){
-			system("CLS");
-		}
-		else{
-			HANDLE hOutput = ::GetStdHandle(STD_OUTPUT_HANDLE);
-
-		   	COORD coord = {0,0};
-		   	::SetConsoleCursorPosition(hOutput, coord);
-
-		   	char buff[] = "\n\n\n\n\n\n";
-		   	::WriteConsoleA(hOutput, buff, 6, NULL, NULL);
-		   	
-		   	::SetConsoleCursorPosition(hOutput, coord);
-		}
-
-    	chrono::duration<double> elapsed_seconds = chrono::system_clock::now()-start;
-	
-        cout << "   Elapsed time : " << setw(6) << setprecision(5) << fixed << elapsed_seconds.count() << "s\n";
-        cout << "Avg time per gen: " << setw(6) << setprecision(5) << fixed << elapsed_seconds.count()/iter << "s" << endl;
-		
-		cout << "   Worst for gen " << setw(4) << iter << " : " << curWorstFitness << endl;
-		cout << "    Best for gen " << setw(4) << iter << " : " << bestThisGen.evaluate(nodeList)<< endl;
-		cout << "Best ever at gen " << setw(4) << bestEverAtGen<< " : " << bestEver.evaluate(nodeList)<< endl;
-		cout << "Best updated at : ";
-		
-		for (int i = 0; i<bestTracker.size(); i++){
-			cout << setw(4) << bestTracker[i] << " ";
-		}
-		
-		hConWnd = GetConsoleWndHandle();
-		if (hConWnd && iter%UPDATE_INTERVAL==1)
-		{
-			for (int i = 0; i<CHROMO_LENGTH; i++){
-				BCX_Line(hConWnd, nodeList[bestThisGen.path[i]].x*XScalar+Xoffset1, nodeList[bestThisGen.path[i]].y*YScalar+Yoffset, nodeList[bestThisGen.path[i==CHROMO_LENGTH-1?0:i+1]].x*XScalar+Xoffset1, nodeList[bestThisGen.path[i==CHROMO_LENGTH-1?0:i+1]].y*YScalar+Yoffset, Red);
-				BCX_Circle(hConWnd, nodeList[i].x*XScalar+Xoffset1, nodeList[i].y*YScalar+Yoffset, 2, Blue, Blue);
-				
-				BCX_Line(hConWnd, nodeList[bestEver.path[i]].x*XScalar+Xoffset2, nodeList[bestEver.path[i]].y*YScalar+Yoffset, nodeList[bestEver.path[i==CHROMO_LENGTH-1?0:i+1]].x*XScalar+Xoffset2, nodeList[bestEver.path[i==CHROMO_LENGTH-1?0:i+1]].y*YScalar+Yoffset, Blue);
-				BCX_Circle(hConWnd, nodeList[i].x*XScalar+Xoffset2, nodeList[i].y*YScalar+Yoffset, 2, Red, Red);
-		  	}
-		  	//nanosleep((const struct timespec[]){{0, 100000000L}}, NULL);
-		}
-
-		
-		//LOOP FOR SELECTION
-		vector<Chromosome> newPool;
-		
-		for (int newGenPop = 0; newGenPop<POOL_SIZE; newGenPop+=2){
-			float rand1 = RANDOM_FLOAT;
-			float rand2 = RANDOM_FLOAT;
-			
-			//Parent Chromosome selection
-			Chromosome cr1;
-			Chromosome cr2;
-			
-			for (int searchChromo = 0; searchChromo < POOL_SIZE; searchChromo++){
-				if (rand1 < cumulativeProb[searchChromo]){
-					cr1 = Chromosome(chromoPool[searchChromo]);
-					rand1 = 999;
-				}
-				if (rand2 < cumulativeProb[searchChromo]){
-					cr2 = Chromosome(chromoPool[searchChromo]);
-					rand2 = 999;
-				}
-				if (rand1 == 999 &&  rand2 == 999){
-					break;
-				}
-			}
-
-			//Edge Recombination Operator
-			if (RANDOM_FLOAT < RECOM_CHANCE){
-				
-				//Reset Adjacency Matrix
-				int adj_matrix[CHROMO_LENGTH][MAX_NEIGHBOURS];
-
-				for (int i=0; i<CHROMO_LENGTH; i++){
-					for (int j=0; j<MAX_NEIGHBOURS; j++){
-						adj_matrix[i][j] = -1;
-					}
-				}
-				
-				updateAdjMatrix(cr1, adj_matrix);
-				updateAdjMatrix(cr2, adj_matrix);
-
-				//Copy adjacency matrix
-				int adj_matrix_copy[CHROMO_LENGTH][MAX_NEIGHBOURS];
-				for (int i = 0; i<CHROMO_LENGTH; i++){
-					for (int j = 0; j<MAX_NEIGHBOURS; j++){
-						adj_matrix_copy[i][j] = adj_matrix[i][j];
-					}
-				}
-
-				Chromosome *temp1 = edge_recom(cr1, cr2, adj_matrix);
-				Chromosome *temp2 = edge_recom(cr1, cr2, adj_matrix_copy);
-
-				cr1 = *temp1;
-				cr2 = *temp2;
-			}
-			
-			newPool.push_back(cr1);
-			newPool.push_back(cr2);
-		}
-		chromoPool.clear();
-		chromoPool.assign(newPool.begin(), newPool.end());
-  		newPool.clear();
-  		
-  		for (int i = 0; i<POOL_SIZE; i++){
-  			if (RANDOM_FLOAT < MUT_CHANCE){
-  				chromoPool[i].mutate();
-  			}
-  		}
-	}
-	std::chrono::time_point<std::chrono::system_clock> end = std::chrono::system_clock::now();
-	std::time_t end_time = std::chrono::system_clock::to_time_t(end);
-	std::time_t start_time = std::chrono::system_clock::to_time_t(start);
-	cout << endl << " Started computation at " << std::ctime(&start_time);
-	cout << endl << "Finished computation at " << std::ctime(&end_time);
-
-	system("PAUSE");
-
- 	return 0;
-}
-
 int BCX_Line (HWND Wnd,int x1,int y1,int x2,int y2,int Pen,HDC DrawHDC)
 {
   int a,b=0;
@@ -566,4 +353,257 @@ HWND GetConsoleWndHandle(void)
     }
   }
   return hConWnd;
+}
+
+int main(){
+	
+	std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
+
+    // Seed RNG
+	srand(time(NULL));
+	
+	// Generate node map
+	vector<Node> nodeList = genNodes(CHROMO_LENGTH);
+	
+	// Generate chromosome pool
+	vector<Chromosome> chromoPool;
+
+	for (int i=0; i<POOL_SIZE; i++){
+		Chromosome cr;
+		chromoPool.push_back(cr);
+		// DEBUG: Displays Chromosome path after insertion into pool
+		// cout << cr;
+	}
+	
+	Chromosome bestEver;
+	Chromosome bestThisGen;
+	int bestEverAtGen = 0;
+	vector<int> bestTracker;
+	bestTracker.reserve(MAX_ALLOW_GEN/50);
+	
+	bestTracker.push_back(0);
+	
+	cout << MAX_ALLOW_GEN << endl; cin.get();
+	
+	for (iter = 1; (iter <= MAX_ALLOW_GEN); iter++){
+		if ((iter-bestTracker.back()) > HARD_THRESHOLD) break;
+		//DEBUG Display Chromosome Pool
+		/*
+		cout << " ==== POOL " << iter << " ==== " << endl;
+		for (int i = 0; i<POOL_SIZE; i++){
+			cout << chromoPool[i] << "\t" << chromoPool[i].evaluate(nodeList) << endl;
+		}
+		cin.get();
+		*/
+
+		bestThisGen = chromoPool[0];
+		
+		//EVAL CODE
+		float fitness[POOL_SIZE];
+		float cumulativeProb[POOL_SIZE];
+		float curCumProb = 0.0;
+		float curTotalFitness = 0.0;
+		float curWorstFitness = 0.0;
+		int trackWorst = -1;
+		
+		// Eval all chromosomes, find worst fitness
+		for (int chromoNum = 0; chromoNum<POOL_SIZE; chromoNum++){
+			fitness[chromoNum] = chromoPool[chromoNum].evaluate(nodeList);
+			
+			if (fitness[chromoNum] > curWorstFitness){
+				curWorstFitness = fitness[chromoNum];
+				trackWorst = chromoNum;
+				//DEBUG : Show worst ftiness this gen
+				//cout << " Worst" <<  curWorstFitness << endl;
+			}
+			
+			if (fitness[chromoNum] < bestEver.evaluate(nodeList)){
+				bestEver = Chromosome(chromoPool[chromoNum]);
+				bestEverAtGen = iter;
+				//DEBUG : For tracking best chromosome updates occuring at what gens
+				bestTracker.push_back(iter);
+			}
+			
+			if (fitness[chromoNum] < bestThisGen.evaluate(nodeList)){
+				bestThisGen = Chromosome(chromoPool[chromoNum]);
+			}
+		}
+		
+		// Randomly reinsert best ever chromosome into the pool, replacing the worst this generation
+		// If iterations since last improvment > REINSERT_GEN
+		if ((bestThisGen.evaluate(nodeList)!=bestEver.evaluate(nodeList))&&(((iter - bestTracker.back()) > REINSERT_GEN)||((bestThisGen.evaluate(nodeList) - bestEver.evaluate(nodeList)) >= (DIFF_FRACTION_BEST*bestEver.evaluate(nodeList)))) && RANDOM_FLOAT < REINSERT_CHANCE){
+			chromoPool.erase(chromoPool.begin() + trackWorst);
+			chromoPool.insert(chromoPool.begin() + trackWorst, bestEver);
+			
+			fitness[trackWorst] = bestEver.evaluate(nodeList);
+		}
+		
+		// Adjust all fitness, sum total adjusted fitness
+		for (int chromoNum = 0; chromoNum<POOL_SIZE; chromoNum++){
+			//DEBUG : Show Pre-adjust fitness
+			//cout << " Fitness " <<  fitness[chromoNum] << endl;
+			fitness[chromoNum] = pow((-fitness[chromoNum] + curWorstFitness),SELECT_PRESSURE);
+			
+			curTotalFitness += fitness[chromoNum];
+		}
+		
+		// Calculate cumulative probability
+		for (int chromoNum = 0; chromoNum<POOL_SIZE; chromoNum++){
+			curCumProb += fitness[chromoNum] / curTotalFitness;
+			cumulativeProb[chromoNum] = curCumProb;
+		}
+		//DEBUG : Show Cumulative Prob
+		//for (int chromoNum = 0; chromoNum<POOL_SIZE; chromoNum++)			cout << cumulativeProb[chromoNum] << endl;
+		
+		//DEBUG : Show best and worst fitness every gen
+		if (iter%UPDATE_INTERVAL==0){
+			system("CLS");
+		}
+		else{
+			HANDLE hOutput = ::GetStdHandle(STD_OUTPUT_HANDLE);
+
+		   	COORD coord = {0,0};
+		   	::SetConsoleCursorPosition(hOutput, coord);
+
+		   	char buff[] = "\n\n\n\n\n\n";
+		   	::WriteConsoleA(hOutput, buff, 6, NULL, NULL);
+		   	
+		   	::SetConsoleCursorPosition(hOutput, coord);
+		}
+
+    	chrono::duration<double> elapsed_seconds = chrono::system_clock::now()-start;
+	
+        cout << "   Elapsed time : " << setw(6) << setprecision(5) << fixed << elapsed_seconds.count() << "s\n";
+        cout << "Avg time per gen: " << setw(6) << setprecision(5) << fixed << elapsed_seconds.count()/iter << "s" << endl;
+		
+		cout << "   Worst for gen " << setw(4) << iter << " : " << curWorstFitness << endl;
+		cout << "    Best for gen " << setw(4) << iter << " : " << bestThisGen.evaluate(nodeList)<< endl;
+		cout << "Best ever at gen " << setw(4) << bestEverAtGen<< " : " << bestEver.evaluate(nodeList)<< endl;
+		cout << "Best updated at : ";
+		
+		for (int i = 0; i<bestTracker.size(); i++){
+			if (i%22==0) cout << endl;
+			cout << setw(6) << bestTracker[i] << ' ';
+		}
+		
+		if (hConWnd && iter%UPDATE_INTERVAL==1)
+		{
+			for (int i = 0; i<CHROMO_LENGTH; i++){
+				BCX_Line(hConWnd, nodeList[bestThisGen.path[i]].x*XScalar+Xoffset1, nodeList[bestThisGen.path[i]].y*YScalar+Yoffset, nodeList[bestThisGen.path[i==CHROMO_LENGTH-1?0:i+1]].x*XScalar+Xoffset1, nodeList[bestThisGen.path[i==CHROMO_LENGTH-1?0:i+1]].y*YScalar+Yoffset, Red);
+				BCX_Circle(hConWnd, nodeList[i].x*XScalar+Xoffset1, nodeList[i].y*YScalar+Yoffset, CircleRadius, Lime);
+				
+				BCX_Line(hConWnd, nodeList[bestEver.path[i]].x*XScalar+Xoffset2, nodeList[bestEver.path[i]].y*YScalar+Yoffset, nodeList[bestEver.path[i==CHROMO_LENGTH-1?0:i+1]].x*XScalar+Xoffset2, nodeList[bestEver.path[i==CHROMO_LENGTH-1?0:i+1]].y*YScalar+Yoffset, Blue);
+				BCX_Circle(hConWnd, nodeList[i].x*XScalar+Xoffset2, nodeList[i].y*YScalar+Yoffset, CircleRadius, Lime);
+		  	}
+		}
+
+		
+		//LOOP FOR SELECTION
+		vector<Chromosome> newPool;
+		
+		for (int newGenPop = 0; newGenPop<POOL_SIZE; newGenPop+=2){
+			float rand1 = RANDOM_FLOAT;
+			float rand2 = RANDOM_FLOAT;
+			
+			//Parent Chromosome selection
+			Chromosome cr1;
+			Chromosome cr2;
+			
+			for (int searchChromo = 0; searchChromo < POOL_SIZE; searchChromo++){
+				if (rand1 < cumulativeProb[searchChromo]){
+					cr1 = Chromosome(chromoPool[searchChromo]);
+					rand1 = 999;
+				}
+				if (rand2 < cumulativeProb[searchChromo]){
+					cr2 = Chromosome(chromoPool[searchChromo]);
+					rand2 = 999;
+				}
+				if (rand1 == 999 &&  rand2 == 999){
+					break;
+				}
+			}
+
+			//Edge Recombination Operator
+			if (RANDOM_FLOAT < RECOM_CHANCE){
+				
+				//Reset Adjacency Matrix
+				int adj_matrix[CHROMO_LENGTH][MAX_NEIGHBOURS];
+
+				for (int i=0; i<CHROMO_LENGTH; i++){
+					for (int j=0; j<MAX_NEIGHBOURS; j++){
+						adj_matrix[i][j] = -1;
+					}
+				}
+				
+				updateAdjMatrix(cr1, adj_matrix);
+				updateAdjMatrix(cr2, adj_matrix);
+
+				//Copy adjacency matrix
+				int adj_matrix_copy[CHROMO_LENGTH][MAX_NEIGHBOURS];
+				for (int i = 0; i<CHROMO_LENGTH; i++){
+					for (int j = 0; j<MAX_NEIGHBOURS; j++){
+						adj_matrix_copy[i][j] = adj_matrix[i][j];
+					}
+				}
+
+				Chromosome *temp1 = edge_recom(cr1, cr2, adj_matrix);
+				Chromosome *temp2 = edge_recom(cr1, cr2, adj_matrix_copy);
+
+				cr1 = *temp1;
+				cr2 = *temp2;
+			}
+			
+			newPool.push_back(cr1);
+			newPool.push_back(cr2);
+		}
+		chromoPool.clear();
+		chromoPool.assign(newPool.begin(), newPool.end());
+  		newPool.clear();
+  		
+  		for (int i = 0; i<POOL_SIZE; i++){
+  			if (RANDOM_FLOAT < MUT_CHANCE){
+  				chromoPool[i].mutate();
+  			}
+  		}
+	}
+	
+	//End of computation, display results
+	system("CLS");
+
+	chrono::duration<double> elapsed_seconds = chrono::system_clock::now()-start;
+
+    cout << "   Elapsed time : " << setw(6) << setprecision(5) << fixed << elapsed_seconds.count() << "s\n";
+    cout << "Avg time per gen: " << setw(6) << setprecision(5) << fixed << elapsed_seconds.count()/iter << "s" << endl;
+
+	cout << "Best updated at : ";
+
+	for (int i = 0; i<bestTracker.size(); i++){
+		cout << setw(4) << bestTracker[i] << " ";
+  	}
+	
+	cout <<endl;
+	
+	if (iter-bestTracker.back() <= HARD_THRESHOLD){
+		cout << " Terminated at " << iter << endl;
+	}
+	
+	std::chrono::time_point<std::chrono::system_clock> end = std::chrono::system_clock::now();
+	std::time_t end_time = std::chrono::system_clock::to_time_t(end);
+	std::time_t start_time = std::chrono::system_clock::to_time_t(start);
+	cout << " Started computation at " << std::ctime(&start_time) << endl;
+	cout << "Finished computation at " <<std::ctime(&end_time) << endl;
+
+	cout << "Best path found : " << endl << bestEver <<endl;
+	
+	if (hConWnd)
+	{
+		for (int i = 0; i<CHROMO_LENGTH; i++){
+   			BCX_Line(hConWnd, nodeList[bestEver.path[i]].x*XScalar+(Xoffset1 +Xoffset2)/2, nodeList[bestEver.path[i]].y*YScalar+Yoffset, nodeList[bestEver.path[i==CHROMO_LENGTH-1?0:i+1]].x*XScalar+(Xoffset1 +Xoffset2)/2, nodeList[bestEver.path[i==CHROMO_LENGTH-1?0:i+1]].y*YScalar+Yoffset, Blue);
+			BCX_Circle(hConWnd, nodeList[i].x*XScalar+(Xoffset1 +Xoffset2)/2, nodeList[i].y*YScalar+Yoffset, CircleRadius, Lime);
+	  	}
+	}
+	
+	cin.get();
+
+ 	return 0;
 }
